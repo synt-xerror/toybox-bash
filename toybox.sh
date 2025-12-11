@@ -6,7 +6,7 @@ BLUE='\033[0;34m'
 LBLUE='\033[94m'
 NC='\033[0m'
 
-player_ok() {
+cmd_ok() {
     "$@" >/dev/null 2>&1 &
     local pid=$!
 
@@ -28,7 +28,7 @@ playaudio() {
 
     # aplay
     if command -v aplay >/dev/null 2>&1; then
-        if player_ok aplay "$file"; then
+        if cmd_ok aplay "$file"; then
             nohup aplay "$file" >/dev/null 2>&1 &
             return 0
         fi
@@ -36,7 +36,7 @@ playaudio() {
 
     # paplay
     if command -v paplay >/dev/null 2>&1; then
-        if player_ok paplay "$file"; then
+        if cmd_ok paplay "$file"; then
             nohup paplay "$file" >/dev/null 2>&1 &
             return 0
         fi
@@ -44,7 +44,7 @@ playaudio() {
 
     # play (SoX)
     if command -v play >/dev/null 2>&1; then
-        if player_ok play "$file"; then
+        if cmd_ok play "$file"; then
             nohup play "$file" >/dev/null 2>&1 &
             return 0
         fi
@@ -52,7 +52,7 @@ playaudio() {
 
     # ffplay
     if command -v ffplay >/dev/null 2>&1; then
-        if player_ok ffplay -nodisp -autoexit -loglevel quiet "$file"; then
+        if cmd_ok ffplay -nodisp -autoexit -loglevel quiet "$file"; then
             ffplay -nodisp -autoexit -loglevel quiet "$file"
             return 0
         fi
