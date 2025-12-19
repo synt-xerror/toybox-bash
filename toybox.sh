@@ -6,60 +6,38 @@ BLUE='\033[0;34m'
 LBLUE='\033[94m'
 NC='\033[0m'
 
-cmd_ok() {
-    "$@" >/dev/null 2>&1 &
-    local pid=$!
-
-    # espera 0.2s para saber se o processo morreu (erro) ou continua (ok)
-    sleep 0.2
-
-    if ! kill -0 "$pid" 2>/dev/null; then
-        return 1  # morreu -> falhou
-    fi
-
-    kill "$pid" 2>/dev/null
-    return 0  # funciona
+player_ok() {
+    "$@" >/dev/null 2>&1
+    return $?  # se rodou com sucesso -> ok
 }
 
 playaudio() {
     local file="$1"
-
     [[ -f "$file" ]] || return 1
 
-    # aplay
-    if command -v aplay >/dev/null 2>&1; then
-        if cmd_ok aplay "$file"; then
-            nohup aplay "$file" >/dev/null 2>&1 &
-            return 0
-        fi
-    fi
+    local player_cmds=("aplay" "paplay" "play" "ffplay")
+    local cmd
 
-    # paplay
-    if command -v paplay >/dev/null 2>&1; then
-        if cmd_ok paplay "$file"; then
-            nohup paplay "$file" >/dev/null 2>&1 &
-            return 0
+    for cmd in "${player_cmds[@]}"; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            if [[ "$cmd" == "ffplay" ]]; then
+                ffplay -nodisp -autoexit -loglevel quiet "$file" &
+                return 0
+            else
+                # testa se funciona
+                "$cmd" "$file" >/dev/null 2>&1 &
+                local pid=$!
+                sleep 0.2
+                if kill -0 "$pid" 2>/dev/null; then
+                    return 0  # já está tocando, não inicia outro
+                fi
+            fi
         fi
-    fi
+    done
 
-    # play (SoX)
-    if command -v play >/dev/null 2>&1; then
-        if cmd_ok play "$file"; then
-            nohup play "$file" >/dev/null 2>&1 &
-            return 0
-        fi
-    fi
-
-    # ffplay
-    if command -v ffplay >/dev/null 2>&1; then
-        if cmd_ok ffplay -nodisp -autoexit -loglevel quiet "$file"; then
-            ffplay -nodisp -autoexit -loglevel quiet "$file"
-            return 0
-        fi
-    fi
-
-    return 2  # nenhum player funcional
+    return 2
 }
+
 
 
 anime() {
@@ -322,198 +300,71 @@ set_status() {
 }
 
 detect_base() {
-    # Detecta pela pkgbase (se nada mais funcionar)
     if command -v apt &> /dev/null; then
-        PKG="debian"
-    elif command -v dnf &> /dev/null; then
-        PKG="fedora"
-    elif command -v pacman &> /dev/null; then
-        PKG="arch"
-    elif command -v zypper &> /dev/null; then
-        PKG="suse"
-    elif command -v apk &> /dev/null; then
-        PKG="alpine"
-    else
-        PKG="none"
-    fi
-
-    # 1) Prioriza os-release
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-
-        if [ -n "$ID_LIKE" ]; then
-            read -r -a like_arr <<< "$ID_LIKE"
-            BASE="${like_arr[0]}"
-            return
-        fi
-
-        if [ -n "$ID" ]; then
-            BASE="$ID"
-            return
-        fi
-    fi
-
-    # 2) Fallback para outros arquivos
-    for file in /etc/*release /etc/*_version /etc/*-release; do
-        [ -f "$file" ] || continue
-        . "$file"
-
-        if [ -n "$ID_LIKE" ]; then
-            read -r -a like_arr <<< "$ID_LIKE"
-            BASE="${like_arr[0]}"
-            return
-        elif [ -n "$ID" ]; then
-            BASE="$ID"
-            return
-        elif [ -n "$DISTRIB_ID" ]; then
-            BASE="$DISTRIB_ID"
-            return
-        else
-            BASE="$(head -n1 "$file")"
-            return
-        fi
-    done
-
-    # 3) Ajustes baseados no PKG
-    if [[ "$ID" == "ubuntu" && "$PKG" == "debian" ]]; then
         BASE="debian"
-        return
+    elif command -v dnf &> /dev/null; then
+        BASE="fedora"
+    elif command -v pacman &> /dev/null; then
+        BASE="arch"
+    elif command -v zypper &> /dev/null; then
+        BASE="opensuse"
+    elif command -v apk &> /dev/null; then
+        BASE="alpine"
+    else
+        BASE=""
     fi
 
-    if [[ "$ID" != "$PKG" ]]; then
-        BASE="unknown"
-        return
-    fi
-
-    if [[ "$ID" == "$PKG" ]]; then
-        BASE="$ID"
-        return
-    fi
-
-    return 127
-}
-# Result:
-#detect_base
-#echo $BASE
-#> arch
-
-detect_distro() {
-    # 1) Prioriza os-release
-    if [ -f /etc/os-release ]; then
+    # Leitura do /etc/os-release
+    if [[ -f /etc/os-release ]]; then
         . /etc/os-release
-        DISTRO="${NAME:-$PRETTY_NAME}"
-        return
+        OS_ID="${ID}"
+        OS_LIKE="${ID_LIKE}"
+    fi
+    OS_LIKE_MAIN=$(echo "$OS_LIKE" | awk '{print $1}')
+
+    if [[ -z "$OS_LIKE_MAIN" && -n "$OS_ID" ]]; then
+        OS_LIKE_MAIN="$OS_ID"
     fi
 
-    # 2) Fallback para arquivos específicos
-    shopt -s nullglob
-    for file in /etc/*release /etc/*_version /etc/*-release; do
-        [ -e "$file" ] || continue
-
-        . "$file"
-
-        if [ -n "${NAME:-}" ]; then
-            DISTRO="$NAME"
-            shopt -u nullglob
-            return
-
-        elif [ -n "${DISTRIB_ID:-}" ]; then
-            DISTRO="$DISTRIB_ID"
-            shopt -u nullglob
-            return
-
-        else
-            DISTRO="$(head -n1 "$file")"
-            shopt -u nullglob
-            return
-        fi
-    done
-    shopt -u nullglob
-
-    return 127
-
-}
-# Result
-# detect_distro
-# echo "$NAME"
-# > Arch Linux
-
-detect_windows() {
-    # 1) Git Bash / MSYS2 / MinGW
-    case "$(uname -s)" in
-        MINGW*|MSYS*)
-            windows_env="Git Bash / MSYS2"
-            return 0
-            ;;
+    LIKE_BASE=""
+    case "$OS_LIKE_MAIN" in
+        debian|ubuntu) LIKE_BASE="debian" ;;
+        rhel|fedora)   LIKE_BASE="fedora" ;;
+        arch)          LIKE_BASE="arch" ;;
+        suse|opensuse) LIKE_BASE="opensuse" ;;
+        alpine)        LIKE_BASE="alpine" ;;
     esac
 
-    # 2) Windows environment variable (Git Bash, MSYS, Cygwin)
-    if [ "$is_windows" = false ] && [ "$OS" = "Windows_NT" ]; then
-        windows_env="Windows_NT (Git Bash/Cygwin/MSYS)"
-        return 0
+    if [[ -z "$BASE" && -z "$LIKE_BASE" ]]; then
+        echo "Erro: não foi possível determinar a base."
+        return 1
     fi
 
-    # 3) WSL
-    if [ "$is_windows" = false ] && grep -qi microsoft /proc/version 2>/dev/null; then
-        windows_env="Windows Subsystem for Linux"
-        return 0
+    if [[ -n "$BASE" && -n "$LIKE_BASE" && "$BASE" != "$LIKE_BASE" ]]; then
+        BASE="$LIKE_BASE"
     fi
 
-    # 4) cmd.exe (fallback)
-    if [ "$is_windows" = false ] && command -v cmd.exe >/dev/null 2>&1; then
-        windows_env="Windows (via cmd.exe)"
-        return 0
+    if [[ -z "$BASE" && -n "$LIKE_BASE" ]]; then
+        BASE="$LIKE_BASE"
     fi
-
-    return 1
-
-    # Result
-    # if detect_windows; then
-    #     echo "Windows detected ($windows_env)"
-    # else
-    #     echo "Isn't windows."
-    # fi
 }
 
-detect_android() {
-    # 1) build.prop
-    if grep -qi android /system/build.prop 2>/dev/null; then
-        android_env="build.prop"
-        return 0
-    fi
+# echo -e "toybox.sh - detect_base: ${RED}NotFound${NC}: Could not detect distribution base."
 
-    # 2) getprop
-    if command -v getprop >/dev/null 2>&1; then
-        if [ -n "$(getprop ro.build.version.release 2>/dev/null)" ]; then
-            android_env="getprop"
+detect_distro() {
+    for f in /etc/os-release /usr/lib/os-release /etc/lsb-release; do
+        if [ -r "$f" ]; then
+            . "$f"
+            DISTRO="${NAME:-$DISTRIB_ID}"
             return 0
         fi
-    fi
+    done
 
-    # 3) common directories
-    if [ -d /sdcard ] && [ -d /system ]; then
-        android_env="paths típicos"
-        return 0
-    fi
+    echo "toybox.sh - detect_distro: NotFound: Could not detect distribution name."
+    return 127
+}
 
-    # 4) Termux
-    if [[ "$PREFIX" == /data/data/*com.termux* ]]; then
-        android_env="Termux"
-        return 0
-    fi
-
-    # 5) kernel
-    if uname -a | grep -qi android; then
-        android_env="kernel string"
-        return 0
-    fi
-
-    return 1
-
-    # Result
-    # if detect_android; then
-    #     echo "Android detected ($android_env)"
-    # else
-    #     echo "Isn't Android"
-    # fi
+run() {
+    "$@" &
+    (( $(jobs -r | wc -l) >= 3 )) && wait -n
 }
